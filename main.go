@@ -16,6 +16,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gorilla/websocket"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/joho/godotenv"
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip13"
@@ -24,13 +25,8 @@ import (
 var sk string
 var pk string
 var numberOfWorkers int
-var nonceFound int32 = 0
-var blockNumber uint64
 
-var lastBlockNumber atomic.Value
-var hash atomic.Value
 var messageId atomic.Value
-var currentWorkers int32
 var arbRpcUrl string
 
 var (
@@ -38,8 +34,14 @@ var (
 	ErrGenerateTimeout  = errors.New("nip13: generating proof of work took too long")
 )
 
-func init() {
+var chLimit chan string
+var messageCache *expirable.LRU[string, string]
+var blockClient *ethclient.Client
 
+func init() {
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.Ldate | log.Ltime) // Add this line
+	log.Println("Starting...")
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
@@ -48,6 +50,13 @@ func init() {
 	pk = os.Getenv("pk")
 	numberOfWorkers, _ = strconv.Atoi(os.Getenv("numberOfWorkers"))
 	arbRpcUrl = os.Getenv("arbRpcUrl")
+	chLimit = make(chan string, numberOfWorkers)
+
+	messageCache = expirable.NewLRU[string, string](5, nil, time.Second*10)
+	blockClient, err = ethclient.Dial(arbRpcUrl)
+	if err != nil {
+		log.Fatalf("无法连接到Arbitrum节点: %v", err)
+	}
 }
 
 func generateRandomString(length int) (string, error) {
@@ -80,7 +89,7 @@ func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
 			// fmt.Print(time.Since(start))
 			return event, nil
 		}
-		if time.Since(start) >= 1*time.Second {
+		if time.Since(start) >= 10*time.Second {
 			return event, ErrGenerateTimeout
 		}
 	}
@@ -100,8 +109,18 @@ type EV struct {
 	PubKey    string          `json:"pubkey"`
 }
 
-func mine(ctx context.Context, messageId string, client *ethclient.Client, blockNumber uint64) {
-
+func getBlockInfo() (uint64, string) {
+	header, err := blockClient.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		log.Fatalf("无法获取最新区块号: %v", err)
+	}
+	return header.Number.Uint64(), header.Hash().Hex()
+}
+func mine(ctx context.Context, messageId string) {
+	start := time.Now()
+	blockNumber, blockHash := getBlockInfo()
+	fmt.Println("getBlockInfo spend: ", time.Since(start))
+	//log.Println("blockNumber: ", blockNumber, "blockHash: ", blockHash, "messageId: ", messageId)
 	replayUrl := "wss://relay.noscription.org/"
 	difficulty := 21
 
@@ -124,7 +143,7 @@ func mine(ctx context.Context, messageId string, client *ethclient.Client, block
 	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"p", "9be107b0d7218c67b4954ee3e6bd9e4dba06ef937a93f684e42f730a0c3d053c"})
 	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"e", "51ed7939a984edee863bfbb2e66fdc80436b000a8ddca442d83e6a2bf1636a95", replayUrl, "root"})
 	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"e", messageId, replayUrl, "reply"})
-	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"seq_witness", strconv.Itoa(int(blockNumber)), hash.Load().(string)})
+	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"seq_witness", strconv.Itoa(int(blockNumber)), blockHash})
 	// Start multiple worker goroutines
 	go func() {
 		select {
@@ -134,7 +153,7 @@ func mine(ctx context.Context, messageId string, client *ethclient.Client, block
 			evCopy := ev
 			evCopy, err := Generate(evCopy, difficulty)
 			if err != nil {
-				// fmt.Println(err)
+				fmt.Println(err)
 				notFound <- evCopy
 			}
 			foundEvent <- evCopy
@@ -203,7 +222,6 @@ func mine(ctx context.Context, messageId string, client *ethclient.Client, block
 		spendTime := time.Since(startTime)
 		// fmt.Println("Response Body:", string(body))
 		fmt.Println(nostr.Now().Time(), "spend: ", spendTime, "!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID, messageId, blockNumber)
-		atomic.StoreInt32(&nonceFound, 0)
 	case <-ctx.Done():
 		fmt.Print("done")
 	}
@@ -241,35 +259,11 @@ func main() {
 
 	var err error
 
-	client, err := ethclient.Dial(arbRpcUrl)
-	if err != nil {
-		log.Fatalf("无法连接到Arbitrum节点: %v", err)
-	}
-
 	c, err := connectToWSS(wssAddr)
 	if err != nil {
 		panic(err)
 	}
 	defer c.Close()
-
-	// initialize an empty cancel function
-
-	// get block
-	go func() {
-		for {
-			header, err := client.HeaderByNumber(context.Background(), nil)
-			if err != nil {
-				log.Fatalf("无法获取最新区块号: %v", err)
-			}
-			//fmt.Println(header.Number)
-			if header.Number.Uint64() >= blockNumber {
-				hash.Store(header.Hash().Hex())
-				atomic.StoreUint64(&blockNumber, header.Number.Uint64())
-			} else {
-				time.Sleep(200 * time.Millisecond)
-			}
-		}
-	}()
 
 	go func() {
 		for {
@@ -284,41 +278,30 @@ func main() {
 				fmt.Println(err)
 				continue
 			}
-			messageId.Store(messageDecode.EventId)
-		}
 
-	}()
-
-	atomic.StoreInt32(&currentWorkers, 0)
-	// 初始化一个取消上下文和它的取消函数
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// 监听blockNumber和messageId变化
-	go func() {
-		for {
-			select {
-			case <-ctx.Done(): // 如果上下文被取消，则退出协程
-				return
-			default:
-				if atomic.LoadInt32(&currentWorkers) < int32(numberOfWorkers) && messageId.Load() != nil && blockNumber > 0 {
-					//fmt.Println(blockNumber, messageId.Load().(string))
-					if lastBlockNumber.Load() != nil && lastBlockNumber.Load().(uint64) == blockNumber {
-						//fmt.Printf("blockNumber not changed; %d\n", blockNumber)
-						time.Sleep(10 * time.Millisecond)
-						continue
-					}
-					atomic.AddInt32(&currentWorkers, 1) // 增加工作者数量
-					lastBlockNumber.Store(blockNumber)
-					go func(bn uint64, mid string) {
-						defer atomic.AddInt32(&currentWorkers, -1) // 完成后减少工作者数量
-						mine(ctx, mid, client, bn)
-					}(blockNumber, messageId.Load().(string))
-				}
+			_, ok := messageCache.Get(messageDecode.EventId)
+			// check for OK value
+			if ok {
+				//fmt.Println("message already saved: ", messageDecode.EventId)
+			} else {
+				//log.Println("recv: ", messageDecode.EventId)
+				messageCache.Add(messageDecode.EventId, messageDecode.EventId)
+				//chLimit <- messageDecode.EventId
+				go mine(ctx, messageDecode.EventId)
 			}
 		}
+
 	}()
-
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	select {}
-
 }
+
+//func doJob(ctx context.Context) {
+//	for {
+//		go func() {
+//			messageId := <-chLimit
+//			mine(ctx, messageId)
+//		}()
+//	}
+//}
