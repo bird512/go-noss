@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +26,8 @@ var pk string
 var numberOfWorkers int
 var nonceFound int32 = 0
 var blockNumber uint64
+
+var lastBlockNumber atomic.Value
 var hash atomic.Value
 var messageId atomic.Value
 var currentWorkers int32
@@ -99,7 +100,7 @@ type EV struct {
 	PubKey    string          `json:"pubkey"`
 }
 
-func mine(ctx context.Context, messageId string, client *ethclient.Client) {
+func mine(ctx context.Context, messageId string, client *ethclient.Client, blockNumber uint64) {
 
 	replayUrl := "wss://relay.noscription.org/"
 	difficulty := 21
@@ -196,9 +197,12 @@ func mine(ctx context.Context, messageId string, client *ethclient.Client) {
 		defer resp.Body.Close()
 
 		fmt.Println("Response Status:", resp.Status)
+		// print the resp's body test, and make sure it's a valid json
+
+		//body, _ := ioutil.ReadAll(resp.Body)
 		spendTime := time.Since(startTime)
 		// fmt.Println("Response Body:", string(body))
-		fmt.Println(nostr.Now().Time(), "spend: ", spendTime, "!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID)
+		fmt.Println(nostr.Now().Time(), "spend: ", spendTime, "!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID, messageId, blockNumber)
 		atomic.StoreInt32(&nonceFound, 0)
 	case <-ctx.Done():
 		fmt.Print("done")
@@ -257,9 +261,12 @@ func main() {
 			if err != nil {
 				log.Fatalf("无法获取最新区块号: %v", err)
 			}
+			//fmt.Println(header.Number)
 			if header.Number.Uint64() >= blockNumber {
 				hash.Store(header.Hash().Hex())
 				atomic.StoreUint64(&blockNumber, header.Number.Uint64())
+			} else {
+				time.Sleep(200 * time.Millisecond)
 			}
 		}
 	}()
@@ -295,10 +302,17 @@ func main() {
 				return
 			default:
 				if atomic.LoadInt32(&currentWorkers) < int32(numberOfWorkers) && messageId.Load() != nil && blockNumber > 0 {
+					//fmt.Println(blockNumber, messageId.Load().(string))
+					if lastBlockNumber.Load() != nil && lastBlockNumber.Load().(uint64) == blockNumber {
+						//fmt.Printf("blockNumber not changed; %d\n", blockNumber)
+						time.Sleep(10 * time.Millisecond)
+						continue
+					}
 					atomic.AddInt32(&currentWorkers, 1) // 增加工作者数量
+					lastBlockNumber.Store(blockNumber)
 					go func(bn uint64, mid string) {
 						defer atomic.AddInt32(&currentWorkers, -1) // 完成后减少工作者数量
-						mine(ctx, mid, client)
+						mine(ctx, mid, client, bn)
 					}(blockNumber, messageId.Load().(string))
 				}
 			}
