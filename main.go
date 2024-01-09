@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -22,6 +23,7 @@ import (
 
 var walletFile = "wallets.json"
 var arbRpcUrl string
+var numberOfWorkers = 1
 
 var (
 	ErrDifficultyTooLow = errors.New("nip13: insufficient difficulty")
@@ -31,8 +33,9 @@ var (
 var messageCache *expirable.LRU[string, string]
 var blockClient *ethclient.Client
 var wallets []Wallet
+var counter Counter
 
-func init1() {
+func initEnv() {
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime) // Add this line
 	log.Println("Starting...")
@@ -44,14 +47,16 @@ func init1() {
 	wallets = loadWalletFromFile(walletFile)
 	if len(wallets) == 0 {
 		log.Println("钱包文件为空, 生成随机地址")
-		generateWalletsToFile(2, walletFile)
+		generateWalletsToFile(10, walletFile)
 		wallets = loadWalletFromFile(walletFile)
 	}
 	for _, w := range wallets {
 		log.Println("加载到钱包：", w.PublicNpub)
 	}
 	arbRpcUrl = os.Getenv("arbRpcUrl")
+	numberOfWorkers, _ = strconv.Atoi(os.Getenv("numberOfWorkers"))
 	messageCache = expirable.NewLRU[string, string](5, nil, time.Second*10)
+	counter = Counter{val: 0}
 	blockClient, err = ethclient.Dial(arbRpcUrl)
 	if err != nil {
 		log.Fatalf("无法连接到Arbitrum节点: %v", err)
@@ -104,7 +109,7 @@ func connectToWSS(url string) (*websocket.Conn, error) {
 }
 
 func main() {
-	init1()
+	initEnv()
 	wssAddr := "wss://report-worker-2.noscription.org"
 	// relayUrl := "wss://relay.noscription.org/"
 	ctx := context.Background()
@@ -139,7 +144,13 @@ func main() {
 				//log.Println("recv: ", messageDecode.EventId)
 				messageCache.Add(messageDecode.EventId, messageDecode.EventId)
 				//chLimit <- messageDecode.EventId
-				go mine(ctx, messageDecode.EventId, wallets[0])
+				if counter.Value() >= numberOfWorkers {
+					log.Printf("超过最大工作数%d，跳过..\n", counter.Value())
+					continue
+				} else {
+					go mine(ctx, messageDecode.EventId, wallets[0])
+				}
+
 			}
 		}
 

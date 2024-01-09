@@ -40,7 +40,7 @@ func generateRandomString2(length int) string {
 func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
 	tag := nostr.Tag{"nonce", "", strconv.Itoa(targetDifficulty)}
 	event.Tags = append(event.Tags, tag)
-	start := time.Now()
+	//start := time.Now()
 	for {
 		nonce, err := generateRandomString(10)
 		if err != nil {
@@ -52,14 +52,15 @@ func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
 			// fmt.Print(time.Since(start))
 			return event, nil
 		}
-		if time.Since(start) >= 10*time.Second {
-
-			return event, ErrGenerateTimeout
-		}
+		//if time.Since(start) >= 10*time.Second {
+		//	return event, ErrGenerateTimeout
+		//}
 	}
 }
 
 func mine(ctx context.Context, messageId string, wallet Wallet) {
+	counter.Inc()
+	defer counter.Dec()
 	startTime := time.Now()
 	blockNumber, blockHash := getBlockInfo()
 	blockCostTime := time.Since(startTime)
