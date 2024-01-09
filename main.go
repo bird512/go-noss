@@ -1,17 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -19,14 +15,11 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/joho/godotenv"
 	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/nip13"
 )
 
 var sk string
 var pk string
-var numberOfWorkers int
 
-var messageId atomic.Value
 var arbRpcUrl string
 
 var (
@@ -34,11 +27,10 @@ var (
 	ErrGenerateTimeout  = errors.New("nip13: generating proof of work took too long")
 )
 
-var chLimit chan string
 var messageCache *expirable.LRU[string, string]
 var blockClient *ethclient.Client
 
-func init() {
+func init1() {
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime) // Add this line
 	log.Println("Starting...")
@@ -48,50 +40,19 @@ func init() {
 	}
 	sk = os.Getenv("sk")
 	pk = os.Getenv("pk")
-	numberOfWorkers, _ = strconv.Atoi(os.Getenv("numberOfWorkers"))
+	err = checkWallet(sk, pk)
+	if err != nil {
+		log.Fatalf("私钥公钥不匹配: %v", err)
+		return
+	}
+	newPrivateKey()
+
 	arbRpcUrl = os.Getenv("arbRpcUrl")
-	chLimit = make(chan string, numberOfWorkers)
 
 	messageCache = expirable.NewLRU[string, string](5, nil, time.Second*10)
 	blockClient, err = ethclient.Dial(arbRpcUrl)
 	if err != nil {
 		log.Fatalf("无法连接到Arbitrum节点: %v", err)
-	}
-}
-
-func generateRandomString(length int) (string, error) {
-	charset := "abcdefghijklmnopqrstuvwxyz0123456789" // 字符集
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-
-	for i := 0; i < length; i++ {
-		b[i] = charset[int(b[i])%len(charset)]
-
-	}
-
-	return string(b), nil
-}
-
-func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
-	tag := nostr.Tag{"nonce", "", strconv.Itoa(targetDifficulty)}
-	event.Tags = append(event.Tags, tag)
-	start := time.Now()
-	for {
-		nonce, err := generateRandomString(10)
-		if err != nil {
-			fmt.Println(err)
-		}
-		tag[1] = nonce
-		event.CreatedAt = nostr.Now()
-		if nip13.Difficulty(event.GetID()) >= targetDifficulty {
-			// fmt.Print(time.Since(start))
-			return event, nil
-		}
-		if time.Since(start) >= 10*time.Second {
-			return event, ErrGenerateTimeout
-		}
 	}
 }
 
@@ -115,117 +76,6 @@ func getBlockInfo() (uint64, string) {
 		log.Fatalf("无法获取最新区块号: %v", err)
 	}
 	return header.Number.Uint64(), header.Hash().Hex()
-}
-func mine(ctx context.Context, messageId string) {
-	start := time.Now()
-	blockNumber, blockHash := getBlockInfo()
-	fmt.Println("getBlockInfo spend: ", time.Since(start))
-	//log.Println("blockNumber: ", blockNumber, "blockHash: ", blockHash, "messageId: ", messageId)
-	replayUrl := "wss://relay.noscription.org/"
-	difficulty := 21
-
-	// Create a channel to signal the finding of a valid nonce
-	foundEvent := make(chan nostr.Event, 1)
-	notFound := make(chan nostr.Event, 1)
-	// Create a channel to signal all workers to stop
-	content := "{\"p\":\"nrc-20\",\"op\":\"mint\",\"tick\":\"noss\",\"amt\":\"10\"}"
-	startTime := time.Now()
-
-	ev := nostr.Event{
-		Content:   content,
-		CreatedAt: nostr.Now(),
-		ID:        "",
-		Kind:      nostr.KindTextNote,
-		PubKey:    pk,
-		Sig:       "",
-		Tags:      nil,
-	}
-	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"p", "9be107b0d7218c67b4954ee3e6bd9e4dba06ef937a93f684e42f730a0c3d053c"})
-	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"e", "51ed7939a984edee863bfbb2e66fdc80436b000a8ddca442d83e6a2bf1636a95", replayUrl, "root"})
-	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"e", messageId, replayUrl, "reply"})
-	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"seq_witness", strconv.Itoa(int(blockNumber)), blockHash})
-	// Start multiple worker goroutines
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			evCopy := ev
-			evCopy, err := Generate(evCopy, difficulty)
-			if err != nil {
-				fmt.Println(err)
-				notFound <- evCopy
-			}
-			foundEvent <- evCopy
-		}
-	}()
-
-	select {
-	case <-notFound:
-	case evNew := <-foundEvent:
-		evNew.Sign(sk)
-
-		evNewInstance := EV{
-			Sig:       evNew.Sig,
-			Id:        evNew.ID,
-			Kind:      evNew.Kind,
-			CreatedAt: evNew.CreatedAt,
-			Tags:      evNew.Tags,
-			Content:   evNew.Content,
-			PubKey:    evNew.PubKey,
-		}
-		// 将ev转为Json格式
-		eventJSON, err := json.Marshal(evNewInstance)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		wrapper := map[string]json.RawMessage{
-			"event": eventJSON,
-		}
-
-		// 将包装后的对象序列化成JSON
-		wrapperJSON, err := json.Marshal(wrapper)
-		if err != nil {
-			log.Fatalf("Error marshaling wrapper: %v", err)
-		}
-
-		url := "https://api-worker.noscription.org/inscribe/postEvent"
-		// fmt.Print(bytes.NewBuffer(wrapperJSON))
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(wrapperJSON)) // 修改了弱智项目方不识别美化Json的bug
-		if err != nil {
-			log.Fatalf("Error creating request: %v", err)
-		}
-
-		// 设置HTTP Header
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0")
-		req.Header.Set("Sec-ch-ua", "\"Not A(Brand\";v=\"99\", \"Microsoft Edge\";v=\"121\", \"Chromium\";v=\"121\"")
-		req.Header.Set("Sec-ch-ua-mobile", "?0")
-		req.Header.Set("Sec-ch-ua-platform", "\"Windows\"")
-		req.Header.Set("Sec-fetch-dest", "empty")
-		req.Header.Set("Sec-fetch-mode", "cors")
-		req.Header.Set("Sec-fetch-site", "same-site")
-
-		// 发送请求
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			log.Fatalf("Error sending request: %v", err)
-		}
-		defer resp.Body.Close()
-
-		fmt.Println("Response Status:", resp.Status)
-		// print the resp's body test, and make sure it's a valid json
-
-		//body, _ := ioutil.ReadAll(resp.Body)
-		spendTime := time.Since(startTime)
-		// fmt.Println("Response Body:", string(body))
-		fmt.Println(nostr.Now().Time(), "spend: ", spendTime, "!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID, messageId, blockNumber)
-	case <-ctx.Done():
-		fmt.Print("done")
-	}
-
 }
 
 func connectToWSS(url string) (*websocket.Conn, error) {
@@ -252,7 +102,7 @@ func connectToWSS(url string) (*websocket.Conn, error) {
 }
 
 func main() {
-
+	init1()
 	wssAddr := "wss://report-worker-2.noscription.org"
 	// relayUrl := "wss://relay.noscription.org/"
 	ctx := context.Background()
@@ -296,12 +146,3 @@ func main() {
 	defer cancel()
 	select {}
 }
-
-//func doJob(ctx context.Context) {
-//	for {
-//		go func() {
-//			messageId := <-chLimit
-//			mine(ctx, messageId)
-//		}()
-//	}
-//}
