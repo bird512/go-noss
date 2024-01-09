@@ -5,17 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
+	"github.com/nbd-wtf/go-nostr"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
-	"time"
-
-	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/gorilla/websocket"
-	"github.com/hashicorp/golang-lru/v2/expirable"
-	"github.com/joho/godotenv"
-	"github.com/nbd-wtf/go-nostr"
+	"sync/atomic"
 )
 
 //var sk string
@@ -24,13 +22,14 @@ import (
 var walletFile = "wallets.json"
 var arbRpcUrl string
 var numberOfWorkers = 1
-
+var cookie string
 var (
 	ErrDifficultyTooLow = errors.New("nip13: insufficient difficulty")
 	ErrGenerateTimeout  = errors.New("nip13: generating proof of work took too long")
 )
+var messageId atomic.Value
 
-var messageCache *expirable.LRU[string, string]
+// var messageCache *expirable.LRU[string, string]
 var blockClient *ethclient.Client
 var wallets []Wallet
 var counter Counter
@@ -54,8 +53,10 @@ func initEnv() {
 		log.Println("加载到钱包：", w.PublicNpub)
 	}
 	arbRpcUrl = os.Getenv("arbRpcUrl")
+	cookie = os.Getenv("cookie")
 	numberOfWorkers, _ = strconv.Atoi(os.Getenv("numberOfWorkers"))
-	messageCache = expirable.NewLRU[string, string](5, nil, time.Second*10)
+	//messageCache = expirable.NewLRU[string, string](5, nil, time.Second*10)
+
 	counter = Counter{val: 0}
 	blockClient, err = ethclient.Dial(arbRpcUrl)
 	if err != nil {
@@ -77,25 +78,23 @@ type EV struct {
 	PubKey    string          `json:"pubkey"`
 }
 
-func getBlockInfo() (uint64, string) {
-	header, err := blockClient.HeaderByNumber(context.Background(), nil)
-	if err != nil {
-		log.Fatalf("无法获取最新区块号: %v", err)
-	}
-	return header.Number.Uint64(), header.Hash().Hex()
-}
-
-func connectToWSS(url string) (*websocket.Conn, error) {
+func connectToWSS(host string) (*websocket.Conn, error) {
+	url := "wss://" + host + "/"
 	var conn *websocket.Conn
 	var err error
 	headers := http.Header{}
 	headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0")
 	headers.Add("Origin", "https://noscription.org")
-	headers.Add("Host", "report-worker-2.noscription.org")
+	headers.Add("Host", host)
+
+	headers.Add("Cookie", cookie)
+	//headers.Add("sec-websocket-key", "U+18SHVTcfkdgYpiCIx7QA==")
+	//headers.Add("sec-websocket-version", "13")
+
 	for {
 		// 使用gorilla/websocket库建立连接
 		conn, _, err = websocket.DefaultDialer.Dial(url, headers)
-		fmt.Println("Connecting to wss")
+		fmt.Println("Connecting to:", url)
 		if err != nil {
 			// 连接失败，打印错误并等待一段时间后重试
 			fmt.Println("Error connecting to WebSocket:", err)
@@ -110,7 +109,10 @@ func connectToWSS(url string) (*websocket.Conn, error) {
 
 func main() {
 	initEnv()
+	blockChan := make(chan BlockInfo)
+
 	wssAddr := "wss://report-worker-2.noscription.org"
+	wssAddr = "report-worker-ng.noscription.org"
 	// relayUrl := "wss://relay.noscription.org/"
 	ctx := context.Background()
 
@@ -135,27 +137,30 @@ func main() {
 				fmt.Println(err)
 				continue
 			}
+			messageId.Store(messageDecode.EventId)
 
-			_, ok := messageCache.Get(messageDecode.EventId)
-			// check for OK value
-			if ok {
-				//fmt.Println("message already saved: ", messageDecode.EventId)
-			} else {
-				//log.Println("recv: ", messageDecode.EventId)
-				messageCache.Add(messageDecode.EventId, messageDecode.EventId)
-				//chLimit <- messageDecode.EventId
-				if counter.Value() >= numberOfWorkers {
-					log.Printf("超过最大工作数%d，跳过..\n", counter.Value())
-					continue
-				} else {
-					go mine(ctx, messageDecode.EventId, wallets[0])
-				}
-
-			}
+			//_, ok := messageCache.Get(messageDecode.EventId)
+			//// check for OK value
+			//if ok {
+			//	//fmt.Println("message already saved: ", messageDecode.EventId)
+			//} else {
+			//	//log.Println("recv: ", messageDecode.EventId)
+			//	messageCache.Add(messageDecode.EventId, messageDecode.EventId)
+			//	//chLimit <- messageDecode.EventId
+			//	if counter.Value() >= numberOfWorkers {
+			//		log.Printf("超过最大工作数%d，跳过..\n", counter.Value())
+			//		continue
+			//	} else {
+			//		go mine(ctx, messageDecode.EventId, wallets[0])
+			//	}
+			//
+			//}
 		}
 
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go syncBlockInfo(blockChan)
+	go startMine(ctx, blockChan)
 	select {}
 }

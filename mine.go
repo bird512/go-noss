@@ -41,35 +41,59 @@ func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
 	tag := nostr.Tag{"nonce", "", strconv.Itoa(targetDifficulty)}
 	event.Tags = append(event.Tags, tag)
 	//start := time.Now()
+	//for {
+	nonce, err := generateRandomString(10)
+	if err != nil {
+		fmt.Println(err)
+	}
+	tag[1] = nonce
+	event.CreatedAt = nostr.Now()
+	if nip13.Difficulty(event.GetID()) >= targetDifficulty {
+		// fmt.Print(time.Since(start))
+		return event, nil
+	} else {
+		return event, ErrGenerateTimeout
+	}
+	//if time.Since(start) >= 10*time.Second {
+	//	return event, ErrGenerateTimeout
+	//}
+	//}
+}
+
+func startMine(ctx context.Context, blockChain chan BlockInfo) {
 	for {
-		nonce, err := generateRandomString(10)
-		if err != nil {
-			fmt.Println(err)
+		select {
+		case info := <-blockChain:
+			//log.Println("Received Block:", info)
+			msgId := messageId.Load().(string)
+			if msgId == "" {
+				log.Println("msgId is empty")
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			go mine(info, msgId, wallets[0])
+		case <-ctx.Done():
+			return
 		}
-		tag[1] = nonce
-		event.CreatedAt = nostr.Now()
-		if nip13.Difficulty(event.GetID()) >= targetDifficulty {
-			// fmt.Print(time.Since(start))
-			return event, nil
-		}
-		//if time.Since(start) >= 10*time.Second {
-		//	return event, ErrGenerateTimeout
-		//}
 	}
 }
 
-func mine(ctx context.Context, messageId string, wallet Wallet) {
+func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	counter.Inc()
 	defer counter.Dec()
 	startTime := time.Now()
-	blockNumber, blockHash := getBlockInfo()
-	blockCostTime := time.Since(startTime)
+	blockNumber := blockInfo.blockHeight
+	blockHash := blockInfo.blockHash
 	//log.Println("blockNumber: ", blockNumber, "blockHash: ", blockHash, "messageId: ", messageId)
 	replayUrl := "wss://relay.noscription.org/"
 	difficulty := 21
 
 	// Create a channel to signal the finding of a valid nonce
 	foundEvent := make(chan nostr.Event, 1)
+	//doneEvent := make(chan nostr.Event, 1)
 	notFound := make(chan nostr.Event, 1)
 	// Create a channel to signal all workers to stop
 	content := "{\"p\":\"nrc-20\",\"op\":\"mint\",\"tick\":\"noss\",\"amt\":\"10\"}"
@@ -88,20 +112,34 @@ func mine(ctx context.Context, messageId string, wallet Wallet) {
 	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"e", messageId, replayUrl, "reply"})
 	ev.Tags = ev.Tags.AppendUnique(nostr.Tag{"seq_witness", strconv.Itoa(int(blockNumber)), blockHash})
 	// Start multiple worker goroutines
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			evCopy := ev
-			evCopy, err := Generate(evCopy, difficulty)
-			if err != nil {
-				fmt.Println(err)
-				notFound <- evCopy
+
+	pow := func(ctx context.Context, cancel context.CancelFunc, evCopy nostr.Event) {
+		//log.Println("start pow for ", blockNumber)
+		counter.Inc()
+		defer counter.Dec()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				evCopy, err := Generate(evCopy, difficulty)
+				if err == nil {
+					cancel()
+					foundEvent <- evCopy
+				}
 			}
-			foundEvent <- evCopy
 		}
-	}()
+
+	}
+	maxCount := numberOfWorkers - counter.Value()
+	if maxCount >= numberOfWorkers*3/4 {
+		for i := 0; i < maxCount; i++ {
+			go pow(ctx, cancel, ev)
+		}
+	} else {
+		//log.Println("no job to run", blockNumber)
+		return
+	}
 
 	select {
 	case <-notFound:
@@ -165,12 +203,12 @@ func mine(ctx context.Context, messageId string, wallet Wallet) {
 		bodyString := string(bodyBytes)
 		spendTime := time.Since(startTime)
 		if resp.Status == "200 OK" {
-			log.Println("spend: [", blockCostTime, spendTime, "]!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID, messageId, blockNumber, "res: ", bodyString)
+			log.Println("spend: [", spendTime, "]!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID, messageId, blockNumber, "res: ", bodyString)
 		} else {
-			log.Println("spend: [", blockCostTime, spendTime, "]!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID, messageId, blockNumber, "error: ", resp.Status)
+			log.Println("spend: [", spendTime, "]!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID, messageId, blockNumber, "error: ", resp.Status)
 		}
-	case <-ctx.Done():
-		fmt.Print("done")
+		//case <-ctx.Done():
+		//	fmt.Print("done")
 	}
 
 }
