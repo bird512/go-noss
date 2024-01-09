@@ -65,9 +65,9 @@ func startMine(ctx context.Context, blockChain chan BlockInfo) {
 		select {
 		case info := <-blockChain:
 			//log.Println("Received Block:", info)
-			msgId := messageId.Load().(string)
-			if msgId == "" {
-				log.Println("msgId is empty")
+			msgId, ok := messageId.Load().(string)
+			if !ok {
+				log.Println("msgId is not ready")
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -79,9 +79,9 @@ func startMine(ctx context.Context, blockChain chan BlockInfo) {
 }
 
 func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	counter.Inc()
 	defer counter.Dec()
 	startTime := time.Now()
@@ -127,6 +127,11 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 					cancel()
 					foundEvent <- evCopy
 				}
+				if time.Since(startTime) >= 1*time.Second {
+					cancel()
+					notFound <- evCopy
+					return
+				}
 			}
 		}
 
@@ -145,7 +150,7 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 	case <-notFound:
 	case evNew := <-foundEvent:
 		evNew.Sign(wallet.PrivateKey)
-
+		spendTime := time.Since(startTime)
 		evNewInstance := EV{
 			Sig:       evNew.Sig,
 			Id:        evNew.ID,
@@ -201,7 +206,7 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 			log.Fatal(err)
 		}
 		bodyString := string(bodyBytes)
-		spendTime := time.Since(startTime)
+
 		if resp.Status == "200 OK" {
 			log.Println("spend: [", spendTime, "]!!!!!!!!!!!!!!!!!!!!!published to:", evNew.ID, messageId, blockNumber, "res: ", bodyString)
 		} else {

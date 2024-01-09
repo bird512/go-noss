@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sync/atomic"
+	"time"
 )
 
 var lastBlockInfo atomic.Value
@@ -35,5 +36,6 @@ func syncBlockInfo(blockChain chan BlockInfo) {
 			lastBlockInfo.Store(info)
 			blockChain <- info
 		}
+		time.Sleep(time.Duration(interval) * time.Millisecond)
 	}
 }

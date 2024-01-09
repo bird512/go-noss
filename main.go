@@ -22,6 +22,7 @@ import (
 var walletFile = "wallets.json"
 var arbRpcUrl string
 var numberOfWorkers = 1
+var interval int64
 var cookie string
 var (
 	ErrDifficultyTooLow = errors.New("nip13: insufficient difficulty")
@@ -35,6 +36,7 @@ var wallets []Wallet
 var counter Counter
 
 func initEnv() {
+
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime) // Add this line
 	log.Println("Starting...")
@@ -52,9 +54,15 @@ func initEnv() {
 	for _, w := range wallets {
 		log.Println("加载到钱包：", w.PublicNpub)
 	}
+
 	arbRpcUrl = os.Getenv("arbRpcUrl")
 	cookie = os.Getenv("cookie")
 	numberOfWorkers, _ = strconv.Atoi(os.Getenv("numberOfWorkers"))
+	interval, _ = strconv.ParseInt(os.Getenv("interval"), 10, 64)
+	if interval < 1 {
+		interval = 100
+	}
+	log.Println("interval = ", interval)
 	//messageCache = expirable.NewLRU[string, string](5, nil, time.Second*10)
 
 	counter = Counter{val: 0}
@@ -138,23 +146,6 @@ func main() {
 				continue
 			}
 			messageId.Store(messageDecode.EventId)
-
-			//_, ok := messageCache.Get(messageDecode.EventId)
-			//// check for OK value
-			//if ok {
-			//	//fmt.Println("message already saved: ", messageDecode.EventId)
-			//} else {
-			//	//log.Println("recv: ", messageDecode.EventId)
-			//	messageCache.Add(messageDecode.EventId, messageDecode.EventId)
-			//	//chLimit <- messageDecode.EventId
-			//	if counter.Value() >= numberOfWorkers {
-			//		log.Printf("超过最大工作数%d，跳过..\n", counter.Value())
-			//		continue
-			//	} else {
-			//		go mine(ctx, messageDecode.EventId, wallets[0])
-			//	}
-			//
-			//}
 		}
 
 	}()
