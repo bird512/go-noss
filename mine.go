@@ -82,8 +82,7 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	counter.Inc()
-	defer counter.Dec()
+
 	startTime := time.Now()
 	blockNumber := blockInfo.blockHeight
 	blockHash := blockInfo.blockHash
@@ -117,6 +116,7 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 		//log.Println("start pow for ", blockNumber)
 		counter.Inc()
 		defer counter.Dec()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -128,15 +128,16 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 					foundEvent <- evCopy
 				}
 				if time.Since(startTime) >= 1*time.Second {
+					//notFound <- evCopy
+					//log.Println("timeout1111", blockNumber)
 					cancel()
-					notFound <- evCopy
-					return
 				}
 			}
 		}
 
 	}
 	maxCount := numberOfWorkers - counter.Value()
+	//fmt.Println("maxCount: ", maxCount)
 	if maxCount >= numberOfWorkers*3/4 {
 		for i := 0; i < maxCount; i++ {
 			go pow(ctx, cancel, ev)
@@ -148,6 +149,7 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 
 	select {
 	case <-notFound:
+		log.Println("not found", blockNumber)
 	case evNew := <-foundEvent:
 		evNew.Sign(wallet.PrivateKey)
 		spendTime := time.Since(startTime)

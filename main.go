@@ -121,6 +121,7 @@ func main() {
 
 	wssAddr := "wss://report-worker-2.noscription.org"
 	wssAddr = "report-worker-ng.noscription.org"
+	wssAddr = "report-worker-2.noscription.org"
 	// relayUrl := "wss://relay.noscription.org/"
 	ctx := context.Background()
 
