@@ -53,12 +53,13 @@ func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
 			return event, nil
 		}
 		if time.Since(start) >= 10*time.Second {
+
 			return event, ErrGenerateTimeout
 		}
 	}
 }
 
-func mine(ctx context.Context, messageId string) {
+func mine(ctx context.Context, messageId string, wallet Wallet) {
 	startTime := time.Now()
 	blockNumber, blockHash := getBlockInfo()
 	blockCostTime := time.Since(startTime)
@@ -77,7 +78,7 @@ func mine(ctx context.Context, messageId string) {
 		CreatedAt: nostr.Now(),
 		ID:        "",
 		Kind:      nostr.KindTextNote,
-		PubKey:    pk,
+		PubKey:    wallet.PublicKey,
 		Sig:       "",
 		Tags:      nil,
 	}
@@ -104,7 +105,7 @@ func mine(ctx context.Context, messageId string) {
 	select {
 	case <-notFound:
 	case evNew := <-foundEvent:
-		evNew.Sign(sk)
+		evNew.Sign(wallet.PrivateKey)
 
 		evNewInstance := EV{
 			Sig:       evNew.Sig,

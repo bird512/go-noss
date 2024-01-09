@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-type wallet struct {
+type Wallet struct {
 	PrivateKey string
 	PublicKey  string
 	PublicNpub string
@@ -26,21 +26,9 @@ func checkWallet(privateKey string, publicKey string) error {
 	return nil
 }
 
-func newPrivateKey() {
-	sk := nostr.GeneratePrivateKey()
-	pk, _ := nostr.GetPublicKey(sk)
-	//nsec, _ := nip19.EncodePrivateKey(sk)
-	npub, _ := nip19.EncodePublicKey(pk)
-
-	fmt.Println("sk:", sk)
-	fmt.Println("pk:", pk)
-	//fmt.Println(nsec)
-	fmt.Println(npub)
-}
-
 func generateWalletsToFile(count uint, filename string) {
 	f, err := os.Create(filename)
-	var wallets []wallet
+	var wallets []Wallet
 
 	defer f.Close()
 	if err != nil {
@@ -52,7 +40,7 @@ func generateWalletsToFile(count uint, filename string) {
 		sk := nostr.GeneratePrivateKey()
 		pk, _ := nostr.GetPublicKey(sk)
 		npub, _ := nip19.EncodePublicKey(pk)
-		w := wallet{
+		w := Wallet{
 			PrivateKey: sk,
 			PublicKey:  pk,
 			PublicNpub: npub,
@@ -64,19 +52,19 @@ func generateWalletsToFile(count uint, filename string) {
 	json.NewEncoder(f).Encode(wallets)
 }
 
-func loadWalletFromFile(file string) {
+func loadWalletFromFile(file string) (w []Wallet) {
 	f, err := os.Open(file)
 	defer f.Close()
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	var w []wallet
+
 	err = json.NewDecoder(f).Decode(&w)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println(w)
+	return
 
 }

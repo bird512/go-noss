@@ -17,9 +17,10 @@ import (
 	"github.com/nbd-wtf/go-nostr"
 )
 
-var sk string
-var pk string
+//var sk string
+//var pk string
 
+var walletFile = "wallets.json"
 var arbRpcUrl string
 
 var (
@@ -29,6 +30,7 @@ var (
 
 var messageCache *expirable.LRU[string, string]
 var blockClient *ethclient.Client
+var wallets []Wallet
 
 func init1() {
 	log.SetOutput(os.Stdout)
@@ -38,17 +40,17 @@ func init1() {
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
-	sk = os.Getenv("sk")
-	pk = os.Getenv("pk")
-	err = checkWallet(sk, pk)
-	if err != nil {
-		log.Fatalf("私钥公钥不匹配: %v", err)
-		return
+
+	wallets = loadWalletFromFile(walletFile)
+	if len(wallets) == 0 {
+		log.Println("钱包文件为空, 生成随机地址")
+		generateWalletsToFile(2, walletFile)
+		wallets = loadWalletFromFile(walletFile)
 	}
-	newPrivateKey()
-
+	for _, w := range wallets {
+		log.Println("加载到钱包：", w.PublicNpub)
+	}
 	arbRpcUrl = os.Getenv("arbRpcUrl")
-
 	messageCache = expirable.NewLRU[string, string](5, nil, time.Second*10)
 	blockClient, err = ethclient.Dial(arbRpcUrl)
 	if err != nil {
@@ -137,7 +139,7 @@ func main() {
 				//log.Println("recv: ", messageDecode.EventId)
 				messageCache.Add(messageDecode.EventId, messageDecode.EventId)
 				//chLimit <- messageDecode.EventId
-				go mine(ctx, messageDecode.EventId)
+				go mine(ctx, messageDecode.EventId, wallets[0])
 			}
 		}
 
