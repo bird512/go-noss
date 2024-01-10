@@ -60,7 +60,7 @@ func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
 	//}
 }
 
-func MineOneEvent(ctx context.Context, msgId string) {
+func MineOneEvent(msgId string) {
 	info := getBlockInfo()
 	if info == nil {
 		log.Println("info is nil")

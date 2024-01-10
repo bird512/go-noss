@@ -30,35 +30,42 @@ func getBlockInfo() *BlockInfo {
 //	   "BlockHash": "0xcc38c7414dc18683d083388786ca0aaeb7bdff858a097767b0bd9ce3dbcb287e"
 //	}
 func syncBlockWss() {
-	wssAddr := "report-worker-arbstate.noscription.org"
-	c, err := connectToWSS(wssAddr)
-	if err != nil {
-		panic(err)
-	}
-	defer c.Close()
-	fmt.Println("connect to wss success", wssAddr)
-	func() {
-		for {
-			_, message, err := c.ReadMessage()
-			if err != nil {
-				log.Println("read syncBlockWss:", err)
-				break
+	loopEvent := func() {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Println("syncBlockWss", err)
 			}
-
-			var info BlockInfo
-			if err := json.Unmarshal(message, &info); err != nil {
-				fmt.Println(err)
-				continue
-			}
-			last := lastBlockInfo.Load() //.(BlockInfo)
-			if last == nil || last.(BlockInfo).BlockNumber < info.BlockNumber {
-
-				lastBlockInfo.Store(info)
-			}
-
+		}()
+		wssAddr := "report-worker-arbstate.noscription.org"
+		c, err := connectToWSS(wssAddr)
+		if err != nil {
+			panic(err)
 		}
+		defer c.Close()
+		fmt.Println("connect to wss success", wssAddr)
+		func() {
+			for {
+				_, message, err := c.ReadMessage()
+				if err != nil {
+					log.Println("read syncBlockWss:", err)
+					break
+				}
 
-	}()
+				var info BlockInfo
+				if err := json.Unmarshal(message, &info); err != nil {
+					fmt.Println(err)
+					continue
+				}
+				last := lastBlockInfo.Load() //.(BlockInfo)
+				if last == nil || last.(BlockInfo).BlockNumber < info.BlockNumber {
+					lastBlockInfo.Store(info)
+				}
+			}
+		}()
+	}
+	for {
+		loopEvent()
+	}
 }
 func syncBlockInfo(blockChain chan BlockInfo) {
 	getBlock := func() {
