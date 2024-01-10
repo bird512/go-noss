@@ -140,11 +140,11 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 					cancel()
 					foundEvent <- evCopy
 				}
-				if time.Since(startTime) >= 1*time.Second {
-					//notFound <- evCopy
-					//log.Println("timeout1111", blockNumber)
+				if time.Since(startTime) >= time.Duration(interval)*time.Millisecond {
+					// ...
 					cancel()
 				}
+
 			}
 		}
 

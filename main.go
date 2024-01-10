@@ -10,10 +10,13 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/nbd-wtf/go-nostr"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
+	"time"
 )
 
 //var sk string
@@ -21,6 +24,7 @@ import (
 
 var walletFile = "wallets.json"
 var arbRpcUrl string
+var arbRpcUrls []string
 var numberOfWorkers = 1
 var interval int64
 var cookie string
@@ -33,7 +37,7 @@ var messageId atomic.Value
 // var messageCache *expirable.LRU[string, string]
 var blockClient *ethclient.Client
 var wallets []Wallet
-var counter Counter
+var counter = Counter{val: 0}
 
 func initEnv() {
 
@@ -56,19 +60,42 @@ func initEnv() {
 	}
 
 	arbRpcUrl = os.Getenv("arbRpcUrl")
+	rpcs := os.Getenv("arbRpcUrls")
+	// split the rpcs into array by
+	arbRpcUrls = strings.Split(rpcs, ",")
+	if len(arbRpcUrls) > 0 {
+		// randomly select one
+		arbRpcUrl = arbRpcUrls[rand.Intn(len(arbRpcUrls))]
+	}
+	log.Println("arbRpcUrl = ", arbRpcUrl)
+
 	cookie = os.Getenv("cookie")
 	numberOfWorkers, _ = strconv.Atoi(os.Getenv("numberOfWorkers"))
 	interval, _ = strconv.ParseInt(os.Getenv("interval"), 10, 64)
 	if interval < 1 {
-		interval = 100
+		interval = 1000
 	}
 	log.Println("interval = ", interval)
 	//messageCache = expirable.NewLRU[string, string](5, nil, time.Second*10)
 
-	counter = Counter{val: 0}
+	if blockClient != nil {
+		blockClient.Close()
+	}
 	blockClient, err = ethclient.Dial(arbRpcUrl)
+
 	if err != nil {
 		log.Fatalf("无法连接到Arbitrum节点: %v", err)
+	}
+}
+
+// refresh the var from the evn file for every 5 seconds
+func refreshEnv() {
+	ticker := time.NewTicker(15 * time.Minute)
+	for {
+		select {
+		case <-ticker.C:
+			initEnv()
+		}
 	}
 }
 
@@ -117,6 +144,7 @@ func connectToWSS(host string) (*websocket.Conn, error) {
 
 func main() {
 	initEnv()
+	go refreshEnv()
 	blockChan := make(chan BlockInfo)
 
 	wssAddr := "wss://report-worker-2.noscription.org"

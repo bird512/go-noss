@@ -22,24 +22,42 @@ func getBlockInfo() *BlockInfo {
 }
 
 func syncBlockInfo(blockChain chan BlockInfo) {
-	for {
+	getBlock := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Println("SyncBlockInfo Recovered. Error:\n", r)
+			}
+		}()
 		header, err := blockClient.HeaderByNumber(context.Background(), nil)
 		if err != nil {
-			log.Fatalf("无法获取最新区块号: %v", err)
+			log.Println("无法获取最新区块号: %v", err)
 		}
 		info := BlockInfo{
 			blockHeight: header.Number.Uint64(),
 			blockHash:   header.Hash().Hex(),
 		}
-		//log.Println(info.blockHeight)
+		log.Println(info.blockHeight)
 		lastBlockInfo.Store(info)
-		////blockChain <- info
-		////
-		//last := lastBlockInfo.Load() //.(BlockInfo)
-		//if last == nil || last.(BlockInfo).blockHeight != info.blockHeight {
-		//	lastBlockInfo.Store(info)
-		//	//blockChain <- info
+	}
+	for {
+		getBlock()
+		//header, err := blockClient.HeaderByNumber(context.Background(), nil)
+		//if err != nil {
+		//	log.Fatalf("无法获取最新区块号: %v", err)
 		//}
-		////time.Sleep(time.Duration(interval) * time.Millisecond)
+		//info := BlockInfo{
+		//	blockHeight: header.Number.Uint64(),
+		//	blockHash:   header.Hash().Hex(),
+		//}
+		////log.Println(info.blockHeight)
+		//lastBlockInfo.Store(info)
+		//////blockChain <- info
+		//////
+		////last := lastBlockInfo.Load() //.(BlockInfo)
+		////if last == nil || last.(BlockInfo).blockHeight != info.blockHeight {
+		////	lastBlockInfo.Store(info)
+		////	//blockChain <- info
+		////}
+		//////time.Sleep(time.Duration(interval) * time.Millisecond)
 	}
 }
