@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"sync/atomic"
-	"time"
 )
 
 var lastBlockInfo atomic.Value
@@ -14,10 +13,13 @@ type BlockInfo struct {
 	blockHash   string
 }
 
-//func getBlockInfo() (uint64, string) {
-//	info := lastBlockInfo.Load().(BlockInfo)
-//	return info.blockHeight, info.blockHash
-//}
+func getBlockInfo() *BlockInfo {
+	last, ok := lastBlockInfo.Load().(BlockInfo)
+	if !ok {
+		return nil
+	}
+	return &last
+}
 
 func syncBlockInfo(blockChain chan BlockInfo) {
 	for {
@@ -29,13 +31,15 @@ func syncBlockInfo(blockChain chan BlockInfo) {
 			blockHeight: header.Number.Uint64(),
 			blockHash:   header.Hash().Hex(),
 		}
-		//blockChain <- info
-		//
-		last := lastBlockInfo.Load() //.(BlockInfo)
-		if last == nil || last.(BlockInfo).blockHeight != info.blockHeight {
-			lastBlockInfo.Store(info)
-			blockChain <- info
-		}
-		time.Sleep(time.Duration(interval) * time.Millisecond)
+		log.Println(info.blockHeight)
+		lastBlockInfo.Store(info)
+		////blockChain <- info
+		////
+		//last := lastBlockInfo.Load() //.(BlockInfo)
+		//if last == nil || last.(BlockInfo).blockHeight != info.blockHeight {
+		//	lastBlockInfo.Store(info)
+		//	//blockChain <- info
+		//}
+		////time.Sleep(time.Duration(interval) * time.Millisecond)
 	}
 }

@@ -60,6 +60,15 @@ func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
 	//}
 }
 
+func MineOneEvent(ctx context.Context, msgId string) {
+	info := getBlockInfo()
+	if info == nil {
+		log.Println("info is nil")
+		return
+	}
+	go mine(*info, msgId, wallets[0])
+}
+
 func startMine(ctx context.Context, blockChain chan BlockInfo) {
 	for {
 		select {
@@ -79,7 +88,11 @@ func startMine(ctx context.Context, blockChain chan BlockInfo) {
 }
 
 func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
-
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered. Error:\n", r)
+		}
+	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

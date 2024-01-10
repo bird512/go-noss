@@ -146,13 +146,18 @@ func main() {
 				fmt.Println(err)
 				continue
 			}
+			last := messageId.Load()
+			if last != nil && last.(string) == messageDecode.EventId {
+				continue
+			}
 			messageId.Store(messageDecode.EventId)
+			MineOneEvent(ctx, messageDecode.EventId)
 		}
 
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go syncBlockInfo(blockChan)
-	go startMine(ctx, blockChan)
+	//go startMine(ctx, blockChan)
 	select {}
 }
