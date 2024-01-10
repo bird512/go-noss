@@ -31,7 +31,7 @@ func syncBlockInfo(blockChain chan BlockInfo) {
 			blockHeight: header.Number.Uint64(),
 			blockHash:   header.Hash().Hex(),
 		}
-		log.Println(info.blockHeight)
+		//log.Println(info.blockHeight)
 		lastBlockInfo.Store(info)
 		////blockChain <- info
 		////
