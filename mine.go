@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-var charset = "abcdefghijklmnopqrstuvwxyz0123456789" // 字符集
+var charset = "ABCDEFGHIJKLMNOPQRSTUVWSYZabcdefghijklmnopqrstuvwxyz0123456789" // 字符集
 
 func generateRandomString(length int) (string, error) {
 	b := make([]byte, length)
@@ -42,7 +42,7 @@ func Generate(event nostr.Event, targetDifficulty int) (nostr.Event, error) {
 	event.Tags = append(event.Tags, tag)
 	//start := time.Now()
 	//for {
-	nonce, err := generateRandomString(10)
+	nonce, err := generateRandomString(18)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -97,9 +97,9 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 	defer cancel()
 
 	startTime := time.Now()
-	blockNumber := blockInfo.blockHeight
-	blockHash := blockInfo.blockHash
-	//log.Println("blockNumber: ", blockNumber, "blockHash: ", blockHash, "messageId: ", messageId)
+	blockNumber := blockInfo.BlockNumber
+	blockHash := blockInfo.BlockHash
+	//log.Println("BlockNumber: ", BlockNumber, "BlockHash: ", BlockHash, "messageId: ", messageId)
 	replayUrl := "wss://relay.noscription.org/"
 	difficulty := 21
 
@@ -126,7 +126,7 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 	// Start multiple worker goroutines
 
 	pow := func(ctx context.Context, cancel context.CancelFunc, evCopy nostr.Event) {
-		//log.Println("start pow for ", blockNumber)
+		//log.Println("start pow for ", BlockNumber)
 		counter.Inc()
 		defer counter.Dec()
 
@@ -156,7 +156,7 @@ func mine(blockInfo BlockInfo, messageId string, wallet Wallet) {
 			go pow(ctx, cancel, ev)
 		}
 	} else {
-		//log.Println("no job to run", blockNumber)
+		//log.Println("no job to run", BlockNumber)
 		return
 	}
 

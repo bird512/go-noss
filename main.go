@@ -186,6 +186,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go syncBlockInfo(blockChan)
+	go syncBlockWss()
 	//go startMine(ctx, blockChan)
 	select {}
 }
