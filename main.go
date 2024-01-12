@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
 	"github.com/nbd-wtf/go-nostr"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -140,9 +141,54 @@ func connectToWSS(host string) (*websocket.Conn, error) {
 	return conn, nil
 }
 
+func ping() {
+	remoteCall := func() bool {
+		url := "https://api-worker.noscription.org/indexer/deployEvent?tick=noss"
+		req, _ := http.NewRequest("GET", url, nil)
+		// 设置HTTP Header
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0")
+		req.Header.Set("Sec-ch-ua", "\"Not A(Brand\";v=\"99\", \"Microsoft Edge\";v=\"121\", \"Chromium\";v=\"121\"")
+		req.Header.Set("Sec-ch-ua-mobile", "?0")
+		req.Header.Set("Sec-ch-ua-platform", "\"Windows\"")
+		req.Header.Set("Sec-fetch-dest", "empty")
+		req.Header.Set("Sec-fetch-mode", "cors")
+		req.Header.Set("Sec-fetch-site", "same-site")
+
+		// 发送请求
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Fatalf("Error sending request: %v", err)
+		}
+		defer resp.Body.Close()
+		//fmt.Println("Response Status:", resp.Status)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		bodyString := string(bodyBytes)
+
+		if resp.Status == "200 OK" {
+			log.Println("ping response: ", bodyString)
+			return true
+		} else {
+			log.Println("ping response: ", resp.Status)
+			return false
+		}
+	}
+	for remoteCall() != true {
+		log.Println("ping failed, retry after 5 seconds")
+		time.Sleep(5 * time.Second)
+	}
+	log.Println("ping success")
+}
+
 func main() {
 	initEnv()
 	go refreshEnv()
+
+	ping()
 	blockChan := make(chan BlockInfo)
 	go getEvent()
 	go syncBlockInfo(blockChan)
